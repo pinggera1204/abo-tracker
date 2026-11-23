@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 import { supabase } from "../lib/supabase";
 
@@ -8,10 +8,31 @@ const MIN_LENGTH = 10;
 export default function SetPassword() {
   const { session, loading } = useAuth();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Mail-Scanner rufen Links automatisch auf. Der Einmal-Token wird deshalb
+  // erst eingelöst, wenn ein Mensch auf den Button klickt.
+  const tokenHash = params.get("type") === "invite" ? params.get("token_hash") : null;
+
+  async function acceptInvite() {
+    if (!tokenHash) return;
+    setSubmitting(true);
+    setError(null);
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: "invite",
+    });
+    setSubmitting(false);
+    if (verifyError) {
+      setError("Der Einladungslink ist abgelaufen oder wurde bereits verwendet.");
+      return;
+    }
+    setParams({}, { replace: true });
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -35,6 +56,21 @@ export default function SetPassword() {
   }
 
   if (loading) return <p className="p-8 text-center text-slate-500">Wird geladen …</p>;
+
+  if (tokenHash) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <div className="card w-full max-w-sm space-y-4 text-center">
+          <h1 className="text-2xl font-bold text-teal-800">Einladung annehmen</h1>
+          <p className="text-sm text-slate-600">Bestätige die Einladung, um danach dein Passwort festzulegen.</p>
+          {error && <p role="alert" className="alert-error">{error}</p>}
+          <button type="button" className="btn-primary w-full" disabled={submitting} onClick={() => void acceptInvite()}>
+            {submitting ? "Wird geprüft …" : "Einladung annehmen"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
