@@ -20,7 +20,11 @@ function corsHeaders(origin: string): Record<string, string> {
 function json(body: unknown, status: number, origin: string): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders(origin), "Content-Type": "application/json" },
+    headers: {
+      ...corsHeaders(origin),
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
   });
 }
 
@@ -77,19 +81,26 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Bitte eine gültige E-Mail-Adresse eingeben." }, 400, origin);
   }
 
-  const { error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, {
-    redirectTo: `${origin}${APP_PATH}`,
+  // Es wird bewusst keine E-Mail versendet: Der Admin gibt den Link selbst weiter.
+  const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
+    type: "invite",
+    email,
+    options: { redirectTo: `${origin}${APP_PATH}` },
   });
-  if (inviteError) {
-    console.error("invite failed", inviteError.code, inviteError.message);
-    if (inviteError.code === "email_exists") {
+  if (linkError) {
+    console.error("invite link failed", linkError.code, linkError.message);
+    if (linkError.code === "email_exists") {
       return json({ error: "Diese E-Mail-Adresse ist bereits registriert." }, 409, origin);
     }
-    if (inviteError.status === 429 || inviteError.code === "over_email_send_rate_limit") {
-      return json({ error: "Zu viele E-Mails. Bitte später erneut versuchen." }, 429, origin);
-    }
-    return json({ error: "Einladung konnte nicht versendet werden." }, 502, origin);
+    return json({ error: "Der Einladungslink konnte nicht erstellt werden." }, 502, origin);
   }
 
-  return json({ ok: true }, 200, origin);
+  const hashedToken = linkData.properties?.hashed_token;
+  if (!hashedToken) {
+    console.error("invite link failed: no hashed token");
+    return json({ error: "Der Einladungslink konnte nicht erstellt werden." }, 502, origin);
+  }
+
+  const inviteLink = `${origin}${APP_PATH}?token_hash=${encodeURIComponent(hashedToken)}&type=invite`;
+  return json({ ok: true, inviteLink }, 200, origin);
 });
